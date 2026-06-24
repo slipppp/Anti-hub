@@ -1,4 +1,4 @@
--- ANTI HUB | TEST - COM SELEÇÃO POR FOV E HIGHLIGHT
+-- ANTI HUB | TEST - COM BULLET TELEPORT E SELEÇÃO POR FOV
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -7,25 +7,261 @@ local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
 local Camera = workspace.CurrentCamera
 local Player = Players.LocalPlayer
+local Mouse = Player:GetMouse()
 
 -- VARIÁVEIS DE SELEÇÃO
 local selectedPlayer = nil
 local selectedHighlight = nil
-local fovRadius = 200 -- Raio do FOV para seleção
+local fovRadius = 200
 local selectionEnabled = true
-local highlightColor = Color3.fromRGB(255, 0, 0) -- Vermelho
+local highlightColor = Color3.fromRGB(255, 0, 0)
 
--- CRIAÇÃO DO HIGHLIGHT VERMELHO
+-- ========== BULLET TELEPORT ==========
+local bulletTeleportEnabled = true
+local autoAimEnabled = true
+
+-- FUNÇÃO PARA TELEPORTAR BALA ATÉ O JOGADOR SELECIONADO
+local function teleportBulletToPlayer()
+    if not selectedPlayer or not selectedPlayer.Character then 
+        return false 
+    end
+    
+    local character = selectedPlayer.Character
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then 
+        return false 
+    end
+    
+    -- Pega a parte do corpo para acertar (Head ou Torso)
+    local targetPart = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not targetPart then return false end
+    
+    -- Posição do alvo
+    local targetPosition = targetPart.Position
+    
+    -- Pega a arma que o jogador está usando
+    local currentChar = Player.Character
+    if not currentChar then return false end
+    
+    -- Procura por ferramentas/armas
+    local tool = currentChar:FindFirstChildOfClass("Tool")
+    if not tool then 
+        -- Se não tiver ferramenta, tenta encontrar qualquer parte que possa atirar
+        return false 
+    end
+    
+    -- Procura por um ponto de tiro (fire point)
+    local firePoint = nil
+    for _, child in pairs(tool:GetDescendants()) do
+        if child:IsA("Part") and (child.Name:lower():find("fire") or child.Name:lower():find("barrel") or child.Name:lower():find("tip")) then
+            firePoint = child
+            break
+        end
+    end
+    
+    -- Se não achou fire point, usa a posição da ferramenta
+    if not firePoint then
+        firePoint = tool:FindFirstChild("Handle") or tool:FindFirstChildOfClass("Part")
+    end
+    
+    if not firePoint then return false end
+    
+    -- Cria a bala (ou modifica a existente)
+    local bullet = Instance.new("Part")
+    bullet.Name = "BulletTP"
+    bullet.Size = Vector3.new(0.2, 0.2, 1)
+    bullet.Shape = Enum.PartType.Ball
+    bullet.Material = Enum.Material.Neon
+    bullet.Color = Color3.fromRGB(255, 0, 0)
+    bullet.CanCollide = false
+    bullet.Anchored = false
+    bullet.Parent = workspace
+    
+    -- Coloca a bala no ponto de tiro
+    local fireWorldPos = firePoint.Parent and firePoint.Parent:GetPivot() and firePoint.Parent:GetPivot().Position + Vector3.new(0, 1.5, 0) or 
+                         currentChar:FindFirstChild("HumanoidRootPart") and currentChar.HumanoidRootPart.Position + Vector3.new(0, 1.5, 0) or 
+                         Vector3.new(0, 10, 0)
+    
+    bullet.Position = fireWorldPos
+    
+    -- Faz a bala voar rapidamente até o alvo (teleporte)
+    local distance = (targetPosition - bullet.Position).Magnitude
+    local speed = 1000 -- Velocidade muito alta pra parecer teleporte
+    
+    -- Tween da bala até o alvo
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if not bullet or not bullet.Parent then 
+            if connection then connection:Disconnect() end
+            return 
+        end
+        
+        if not selectedPlayer or not selectedPlayer.Character then
+            bullet:Destroy()
+            if connection then connection:Disconnect() end
+            return
+        end
+        
+        local currentTarget = selectedPlayer.Character:FindFirstChild("Head") or selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not currentTarget then
+            bullet:Destroy()
+            if connection then connection:Disconnect() end
+            return
+        end
+        
+        local targetPos = currentTarget.Position
+        
+        -- Move a bala em direção ao alvo
+        local direction = (targetPos - bullet.Position).unit
+        local step = speed * 0.016 -- Aproximadamente 60 FPS
+        
+        if (targetPos - bullet.Position).Magnitude < step then
+            -- CHEGOU NO ALVO!
+            bullet.Position = targetPos
+            
+            -- DANO NO JOGADOR
+            local humanoid = selectedPlayer.Character:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                -- Dá dano (mata instantaneamente)
+                humanoid.Health = 0
+                
+                -- Efeito de explosão/sangue
+                local explosion = Instance.new("Part")
+                explosion.Name = "ExplosionEffect"
+                explosion.Size = Vector3.new(3, 3, 3)
+                explosion.Shape = Enum.PartType.Ball
+                explosion.Material = Enum.Material.Neon
+                explosion.Color = Color3.fromRGB(255, 0, 0)
+                explosion.CanCollide = false
+                explosion.Anchored = true
+                explosion.Position = targetPos
+                explosion.Parent = workspace
+                
+                -- Efeito de luz
+                local light = Instance.new("PointLight")
+                light.Parent = explosion
+                light.Color = Color3.fromRGB(255, 0, 0)
+                light.Brightness = 5
+                light.Range = 20
+                
+                -- Anima a explosão
+                task.spawn(function()
+                    for i = 1, 20 do
+                        explosion.Size = explosion.Size + Vector3.new(0.3, 0.3, 0.3)
+                        explosion.Transparency = i / 20
+                        task.wait(0.05)
+                    end
+                    explosion:Destroy()
+                end)
+                
+                -- Notificação
+                notify("💀 " .. selectedPlayer.Name .. " foi morto!", Color3.fromRGB(255, 0, 0))
+            end
+            
+            bullet:Destroy()
+            if connection then connection:Disconnect() end
+            return
+        end
+        
+        -- Move a bala
+        bullet.Position = bullet.Position + direction * step
+        
+        -- Rotaciona a bala pra apontar pro alvo
+        bullet.CFrame = CFrame.lookAt(bullet.Position, targetPos)
+        
+        -- Efeito de rastro
+        local trail = Instance.new("Part")
+        trail.Name = "BulletTrail"
+        trail.Size = Vector3.new(0.1, 0.1, 0.5)
+        trail.Material = Enum.Material.Neon
+        trail.Color = Color3.fromRGB(255, 200, 50)
+        trail.CanCollide = false
+        trail.Anchored = true
+        trail.Position = bullet.Position
+        trail.Parent = workspace
+        trail.Transparency = 0.7
+        
+        task.spawn(function()
+            task.wait(0.1)
+            trail:Destroy()
+        end)
+    end)
+    
+    return true
+end
+
+-- FUNÇÃO PARA DETECTAR DISPARO
+local function onShoot()
+    if not bulletTeleportEnabled then return end
+    if not selectedPlayer then 
+        notify("⚠️ Nenhum jogador selecionado!", Color3.fromRGB(255, 200, 0))
+        return 
+    end
+    
+    teleportBulletToPlayer()
+end
+
+-- DETECTA QUANDO O JOGADOR CLICA (ATIRA)
+Mouse.Button1Down:Connect(function()
+    -- Verifica se está segurando uma ferramenta/arma
+    local char = Player.Character
+    if char and char:FindFirstChildOfClass("Tool") then
+        onShoot()
+    end
+end)
+
+-- DETECTA QUANDO USA UMA FERRAMENTA (para armas que usam .Tool)
+local function onToolActivated(tool)
+    if tool and bulletTeleportEnabled then
+        -- Espera um pouco pra garantir que a bala foi criada
+        task.wait(0.05)
+        onShoot()
+    end
+end
+
+-- Detecta quando uma ferramenta é ativada
+local function hookTool(tool)
+    if tool and tool:IsA("Tool") then
+        -- Hook no Activated
+        local oldActivated = tool.Activated
+        tool.Activated = function(...)
+            if oldActivated then oldActivated(...) end
+            onShoot()
+        end
+    end
+end
+
+-- Hook nas ferramentas existentes
+for _, tool in pairs(Player.Backpack:GetChildren()) do
+    if tool:IsA("Tool") then
+        hookTool(tool)
+    end
+end
+
+-- Hook quando uma nova ferramenta é adicionada
+Player.Backpack.ChildAdded:Connect(function(child)
+    if child:IsA("Tool") then
+        hookTool(child)
+    end
+end)
+
+-- Hook quando o jogador equipa uma ferramenta
+Player.CharacterAdded:Connect(function(character)
+    task.wait(0.5)
+    local tool = character:FindFirstChildOfClass("Tool")
+    if tool then
+        hookTool(tool)
+    end
+end)
+
+-- ========== HIGHLIGHT ==========
 local function createHighlight(character)
     if not character then return nil end
-    
-    -- Remove highlight antigo se existir
     for _, child in pairs(character:GetChildren()) do
         if child:IsA("Highlight") then
             child:Destroy()
         end
     end
-    
     local highlight = Instance.new("Highlight")
     highlight.Parent = character
     highlight.FillColor = highlightColor
@@ -33,28 +269,20 @@ local function createHighlight(character)
     highlight.OutlineColor = highlightColor
     highlight.OutlineTransparency = 0.2
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Enabled = false -- Começa desativado
-    
+    highlight.Enabled = false
     return highlight
 end
 
--- FUNÇÃO PARA SELECIONAR JOGADOR
 local function selectPlayer(player)
-    -- Remove seleção anterior
     if selectedHighlight then
         selectedHighlight.Enabled = false
         selectedHighlight = nil
     end
-    
     selectedPlayer = player
-    
     if player and player.Character then
-        -- Cria highlight no jogador selecionado
         selectedHighlight = createHighlight(player.Character)
         if selectedHighlight then
             selectedHighlight.Enabled = true
-            
-            -- Animação de pulsação
             task.spawn(function()
                 while selectedHighlight and selectedHighlight.Enabled do
                     for i = 0.4, 0.7, 0.05 do
@@ -73,38 +301,29 @@ local function selectPlayer(player)
             end)
         end
     end
+    updateStatus()
 end
 
--- FUNÇÃO PARA VERIFICAR SE JOGADOR ESTÁ NO FOV
+-- ========== FOV ==========
 local function isPlayerInFOV(player)
     if not player or not player.Character then return false end
     if player == Player then return false end
-    
     local character = player.Character
     local humanoid = character:FindFirstChild("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return false end
-    
-    -- Pega a parte do corpo para mirar (Head ou HumanoidRootPart)
     local targetPart = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
     if not targetPart then return false end
-    
-    -- Converte posição do alvo para tela
     local screenPos, onScreen = Camera:WorldToScreenPoint(targetPart.Position)
     if not onScreen then return false end
-    
-    -- Calcula distância do centro da tela
     local center = Camera.ViewportSize / 2
     local distance = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-    
     return distance <= fovRadius
 end
 
--- FUNÇÃO PARA ENCONTRAR JOGADOR MAIS PRÓXIMO DO CENTRO DO FOV
 local function findClosestPlayerInFOV()
     local closest = nil
     local closestDist = math.huge
     local center = Camera.ViewportSize / 2
-    
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= Player and player.Character then
             local targetPart = player.Character:FindFirstChild("Head") or player.Character:FindFirstChild("HumanoidRootPart")
@@ -120,114 +339,79 @@ local function findClosestPlayerInFOV()
             end
         end
     end
-    
     return closest
 end
 
--- LOOP DE SELEÇÃO AUTOMÁTICA
-local selectionConnection
-selectionConnection = RunService.RenderStepped:Connect(function()
+-- LOOP DE SELEÇÃO
+RunService.RenderStepped:Connect(function()
     if not selectionEnabled then return end
-    
     local target = findClosestPlayerInFOV()
-    
-    -- Se encontrou um jogador diferente do selecionado atualmente
     if target and target ~= selectedPlayer then
         selectPlayer(target)
     elseif not target and selectedPlayer then
-        -- Remove seleção se não tiver ninguém no FOV
         if selectedHighlight then
             selectedHighlight.Enabled = false
             selectedHighlight = nil
         end
         selectedPlayer = nil
+        updateStatus()
     end
 end)
 
--- DETECTA QUANDO JOGADOR SAI DO JOGO
-Players.PlayerRemoving:Connect(function(player)
-    if player == selectedPlayer then
-        if selectedHighlight then
-            selectedHighlight.Enabled = false
-            selectedHighlight = nil
-        end
-        selectedPlayer = nil
-    end
-end)
-
--- QUANDO JOGADOR ENTRA, CRIA HIGHLIGHT NELE
-Players.PlayerAdded:Connect(function(player)
-    if player ~= Player then
-        player.CharacterAdded:Connect(function(character)
-            task.wait(0.5)
-            -- Se já estiver selecionado, recria o highlight
-            if player == selectedPlayer then
-                selectPlayer(player)
-            end
-        end)
-    end
-end)
-
--- CRIAÇÃO DA GUI ANTI HUB | TEST
+-- ========== GUI ==========
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "AntiHubTest"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- FUNDO DA GUI
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
-MainFrame.Size = UDim2.new(0, 300, 0, 80)
-MainFrame.Position = UDim2.new(0.5, -150, 0.5, -40)
+MainFrame.Size = UDim2.new(0, 350, 0, 120)
+MainFrame.Position = UDim2.new(0.5, -175, 0.5, -60)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 MainFrame.BackgroundTransparency = 0.85
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
 
--- CORNER
 local Corner = Instance.new("UICorner")
 Corner.Parent = MainFrame
 Corner.CornerRadius = UDim.new(0, 12)
 
--- STROKE (BORDA)
 local Stroke = Instance.new("UIStroke")
 Stroke.Parent = MainFrame
 Stroke.Color = Color3.fromRGB(255, 0, 0)
 Stroke.Thickness = 1
 Stroke.Transparency = 0.6
 
--- TÍTULO "Anti Hub | Test"
 local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
-Title.Size = UDim2.new(1, 0, 0, 35)
+Title.Size = UDim2.new(1, 0, 0, 30)
 Title.Position = UDim2.new(0, 0, 0, 5)
 Title.BackgroundTransparency = 1
 Title.Text = "Anti Hub | Test"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 22
+Title.TextSize = 20
 Title.Font = Enum.Font.GothamBold
 Title.TextScaled = true
 Title.TextXAlignment = Enum.TextXAlignment.Center
 
--- SUBTÍTULO COM INFO DO JOGADOR SELECIONADO
 local SubTitle = Instance.new("TextLabel")
 SubTitle.Parent = MainFrame
-SubTitle.Size = UDim2.new(1, 0, 0, 20)
-SubTitle.Position = UDim2.new(0, 0, 0, 40)
+SubTitle.Size = UDim2.new(1, 0, 0, 18)
+SubTitle.Position = UDim2.new(0, 0, 0, 35)
 SubTitle.BackgroundTransparency = 1
-SubTitle.Text = "Selecione um jogador com o FOV"
+SubTitle.Text = "🔴 Selecione um jogador com o FOV"
 SubTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
 SubTitle.TextSize = 12
 SubTitle.Font = Enum.Font.Gotham
 SubTitle.TextXAlignment = Enum.TextXAlignment.Center
 
--- STATUS DO JOGADOR SELECIONADO
 local StatusText = Instance.new("TextLabel")
 StatusText.Parent = MainFrame
-StatusText.Size = UDim2.new(1, 0, 0, 20)
-StatusText.Position = UDim2.new(0, 0, 0, 60)
+StatusText.Size = UDim2.new(1, 0, 0, 18)
+StatusText.Position = UDim2.new(0, 0, 0, 55)
 StatusText.BackgroundTransparency = 1
 StatusText.Text = "Nenhum jogador selecionado"
 StatusText.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -235,30 +419,42 @@ StatusText.TextSize = 11
 StatusText.Font = Enum.Font.Gotham
 StatusText.TextXAlignment = Enum.TextXAlignment.Center
 
--- ATUALIZA STATUS QUANDO SELECIONA JOGADOR
+-- INFO DO BULLET TELEPORT
+local BulletInfo = Instance.new("TextLabel")
+BulletInfo.Parent = MainFrame
+BulletInfo.Size = UDim2.new(1, 0, 0, 18)
+BulletInfo.Position = UDim2.new(0, 0, 0, 75)
+BulletInfo.BackgroundTransparency = 1
+BulletInfo.Text = "💥 Bullet TP: ATIVADO | Atire para matar!"
+BulletInfo.TextColor3 = Color3.fromRGB(100, 255, 100)
+BulletInfo.TextSize = 11
+BulletInfo.Font = Enum.Font.Gotham
+BulletInfo.TextXAlignment = Enum.TextXAlignment.Center
+
 local function updateStatus()
     if selectedPlayer then
         local humanoid = selectedPlayer.Character and selectedPlayer.Character:FindFirstChild("Humanoid")
         local health = humanoid and math.floor(humanoid.Health) or 0
-        StatusText.Text = "Selecionado: " .. selectedPlayer.Name .. " ❤️ " .. health
+        StatusText.Text = "🎯 " .. selectedPlayer.Name .. " ❤️ " .. health
         StatusText.TextColor3 = Color3.fromRGB(100, 255, 100)
-        SubTitle.Text = "Jogador no FOV!"
+        SubTitle.Text = "🔴 Jogador selecionado! Atire para matar!"
+        BulletInfo.Text = "💥 Bullet TP: ATIVADO | Clique para atirar!"
     else
-        StatusText.Text = "Nenhum jogador selecionado"
+        StatusText.Text = "❌ Nenhum jogador selecionado"
         StatusText.TextColor3 = Color3.fromRGB(255, 100, 100)
-        SubTitle.Text = "Mire em um jogador para selecionar"
+        SubTitle.Text = "🔴 Mire em um jogador para selecionar"
+        BulletInfo.Text = "💥 Selecione um jogador primeiro!"
     end
 end
 
--- ATUALIZA STATUS PERIODICAMENTE
 task.spawn(function()
     while true do
         updateStatus()
-        task.wait(0.5)
+        task.wait(0.3)
     end
 end)
 
--- MOSTRA O FOV NA TELA (CÍRCULO)
+-- FOV CIRCLE
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Visible = true
 FOVCircle.Radius = fovRadius
@@ -268,40 +464,17 @@ FOVCircle.Filled = false
 FOVCircle.NumSides = 64
 FOVCircle.Transparency = 0.5
 
--- ATUALIZA POSIÇÃO DO FOV
 RunService.RenderStepped:Connect(function()
     local center = Camera.ViewportSize / 2
     FOVCircle.Position = Vector2.new(center.X, center.Y)
 end)
 
--- TOGGLE DA GUI (INSERT)
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == Enum.KeyCode.Insert then
-        MainFrame.Visible = not MainFrame.Visible
-        FOVCircle.Visible = MainFrame.Visible
-    end
-end)
-
--- TOGGLE DO FOV (F)
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == Enum.KeyCode.F then
-        fovRadius = fovRadius == 200 and 400 or 200
-        FOVCircle.Radius = fovRadius
-    end
-end)
-
--- PRINT DE INICIALIZAÇÃO
-print("Anti Hub | Test carregado com sucesso!")
-print("Pressione INSERT para abrir/fechar a GUI")
-print("Pressione F para alternar o tamanho do FOV")
-print("Mire em um jogador para selecionar com highlight vermelho")
-
--- NOTIFICAÇÃO INICIAL
+-- ========== NOTIFICAÇÕES ==========
 local function notify(text, color)
     local frame = Instance.new("Frame")
     frame.Parent = ScreenGui
-    frame.Size = UDim2.new(0, 300, 0, 40)
-    frame.Position = UDim2.new(0.5, -150, 0, 20)
+    frame.Size = UDim2.new(0, 350, 0, 40)
+    frame.Position = UDim2.new(0.5, -175, 0, -80)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
     frame.BackgroundTransparency = 0.9
     frame.BorderSizePixel = 0
@@ -322,19 +495,71 @@ local function notify(text, color)
     label.BackgroundTransparency = 1
     label.Text = text
     label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextSize = 14
+    label.TextSize = 13
     label.Font = Enum.Font.Gotham
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.TextYAlignment = Enum.TextYAlignment.Center
     
-    game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -150, 0, 60)}):Play()
+    TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -175, 0, 60)}):Play()
     
     task.delay(3, function()
-        game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -150, 0, -80)}):Play()
-        task.delay(0.5, function()
-            frame:Destroy()
-        end)
+        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -175, 0, -80)}):Play()
+        task.delay(0.5, function() frame:Destroy() end)
     end)
 end
 
-notify("Anti Hub | Test carregado!", Color3.fromRGB(255, 0, 0))
+-- ========== CONTROLES ==========
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.Insert then
+        MainFrame.Visible = not MainFrame.Visible
+        FOVCircle.Visible = MainFrame.Visible
+    end
+    if not gpe and input.KeyCode == Enum.KeyCode.F then
+        fovRadius = fovRadius == 200 and 400 or 200
+        FOVCircle.Radius = fovRadius
+        notify("FOV: " .. fovRadius .. "px", Color3.fromRGB(255, 200, 0))
+    end
+    if not gpe and input.KeyCode == Enum.KeyCode.B then
+        bulletTeleportEnabled = not bulletTeleportEnabled
+        notify("Bullet TP: " .. (bulletTeleportEnabled and "✅ ATIVADO" or "❌ DESATIVADO"), 
+               bulletTeleportEnabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0))
+        BulletInfo.Text = "💥 Bullet TP: " .. (bulletTeleportEnabled and "ATIVADO | Atire para matar!" or "DESATIVADO")
+    end
+end)
+
+-- EVENTOS DOS JOGADORES
+Players.PlayerRemoving:Connect(function(player)
+    if player == selectedPlayer then
+        if selectedHighlight then
+            selectedHighlight.Enabled = false
+            selectedHighlight = nil
+        end
+        selectedPlayer = nil
+        updateStatus()
+    end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+    if player ~= Player then
+        player.CharacterAdded:Connect(function(character)
+            task.wait(0.5)
+            if player == selectedPlayer then
+                selectPlayer(player)
+            end
+        end)
+    end
+end)
+
+-- NOTIFICAÇÃO INICIAL
+notify("🔥 Anti Hub | Test carregado!", Color3.fromRGB(255, 0, 0))
+task.wait(1)
+notify("🎯 Mire em um jogador para selecionar", Color3.fromRGB(255, 200, 0))
+task.wait(1)
+notify("💥 Atire para matar com Bullet TP!", Color3.fromRGB(100, 255, 100))
+
+print("=== ANTI HUB | TEST CARREGADO ===")
+print("🎯 Selecione jogadores com o FOV")
+print("💥 Atire para teleportar a bala e matar")
+print("🔄 Pressione B para ligar/desligar Bullet TP")
+print("📌 Pressione INSERT para abrir/fechar a GUI")
+print("📏 Pressione F para alternar o FOV")
