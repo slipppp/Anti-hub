@@ -1,0 +1,340 @@
+-- ANTI HUB | TEST - COM SELEÇÃO POR FOV E HIGHLIGHT
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+local Camera = workspace.CurrentCamera
+local Player = Players.LocalPlayer
+
+-- VARIÁVEIS DE SELEÇÃO
+local selectedPlayer = nil
+local selectedHighlight = nil
+local fovRadius = 200 -- Raio do FOV para seleção
+local selectionEnabled = true
+local highlightColor = Color3.fromRGB(255, 0, 0) -- Vermelho
+
+-- CRIAÇÃO DO HIGHLIGHT VERMELHO
+local function createHighlight(character)
+    if not character then return nil end
+    
+    -- Remove highlight antigo se existir
+    for _, child in pairs(character:GetChildren()) do
+        if child:IsA("Highlight") then
+            child:Destroy()
+        end
+    end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Parent = character
+    highlight.FillColor = highlightColor
+    highlight.FillTransparency = 0.4
+    highlight.OutlineColor = highlightColor
+    highlight.OutlineTransparency = 0.2
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = false -- Começa desativado
+    
+    return highlight
+end
+
+-- FUNÇÃO PARA SELECIONAR JOGADOR
+local function selectPlayer(player)
+    -- Remove seleção anterior
+    if selectedHighlight then
+        selectedHighlight.Enabled = false
+        selectedHighlight = nil
+    end
+    
+    selectedPlayer = player
+    
+    if player and player.Character then
+        -- Cria highlight no jogador selecionado
+        selectedHighlight = createHighlight(player.Character)
+        if selectedHighlight then
+            selectedHighlight.Enabled = true
+            
+            -- Animação de pulsação
+            task.spawn(function()
+                while selectedHighlight and selectedHighlight.Enabled do
+                    for i = 0.4, 0.7, 0.05 do
+                        if not selectedHighlight or not selectedHighlight.Enabled then break end
+                        selectedHighlight.FillTransparency = i
+                        selectedHighlight.OutlineTransparency = i - 0.2
+                        task.wait(0.05)
+                    end
+                    for i = 0.7, 0.4, -0.05 do
+                        if not selectedHighlight or not selectedHighlight.Enabled then break end
+                        selectedHighlight.FillTransparency = i
+                        selectedHighlight.OutlineTransparency = i - 0.2
+                        task.wait(0.05)
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- FUNÇÃO PARA VERIFICAR SE JOGADOR ESTÁ NO FOV
+local function isPlayerInFOV(player)
+    if not player or not player.Character then return false end
+    if player == Player then return false end
+    
+    local character = player.Character
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    
+    -- Pega a parte do corpo para mirar (Head ou HumanoidRootPart)
+    local targetPart = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not targetPart then return false end
+    
+    -- Converte posição do alvo para tela
+    local screenPos, onScreen = Camera:WorldToScreenPoint(targetPart.Position)
+    if not onScreen then return false end
+    
+    -- Calcula distância do centro da tela
+    local center = Camera.ViewportSize / 2
+    local distance = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+    
+    return distance <= fovRadius
+end
+
+-- FUNÇÃO PARA ENCONTRAR JOGADOR MAIS PRÓXIMO DO CENTRO DO FOV
+local function findClosestPlayerInFOV()
+    local closest = nil
+    local closestDist = math.huge
+    local center = Camera.ViewportSize / 2
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= Player and player.Character then
+            local targetPart = player.Character:FindFirstChild("Head") or player.Character:FindFirstChild("HumanoidRootPart")
+            if targetPart then
+                local screenPos, onScreen = Camera:WorldToScreenPoint(targetPart.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+                    if dist <= fovRadius and dist < closestDist then
+                        closestDist = dist
+                        closest = player
+                    end
+                end
+            end
+        end
+    end
+    
+    return closest
+end
+
+-- LOOP DE SELEÇÃO AUTOMÁTICA
+local selectionConnection
+selectionConnection = RunService.RenderStepped:Connect(function()
+    if not selectionEnabled then return end
+    
+    local target = findClosestPlayerInFOV()
+    
+    -- Se encontrou um jogador diferente do selecionado atualmente
+    if target and target ~= selectedPlayer then
+        selectPlayer(target)
+    elseif not target and selectedPlayer then
+        -- Remove seleção se não tiver ninguém no FOV
+        if selectedHighlight then
+            selectedHighlight.Enabled = false
+            selectedHighlight = nil
+        end
+        selectedPlayer = nil
+    end
+end)
+
+-- DETECTA QUANDO JOGADOR SAI DO JOGO
+Players.PlayerRemoving:Connect(function(player)
+    if player == selectedPlayer then
+        if selectedHighlight then
+            selectedHighlight.Enabled = false
+            selectedHighlight = nil
+        end
+        selectedPlayer = nil
+    end
+end)
+
+-- QUANDO JOGADOR ENTRA, CRIA HIGHLIGHT NELE
+Players.PlayerAdded:Connect(function(player)
+    if player ~= Player then
+        player.CharacterAdded:Connect(function(character)
+            task.wait(0.5)
+            -- Se já estiver selecionado, recria o highlight
+            if player == selectedPlayer then
+                selectPlayer(player)
+            end
+        end)
+    end
+end)
+
+-- CRIAÇÃO DA GUI ANTI HUB | TEST
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AntiHubTest"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- FUNDO DA GUI
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.Size = UDim2.new(0, 300, 0, 80)
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -40)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BackgroundTransparency = 0.85
+MainFrame.BorderSizePixel = 0
+MainFrame.ClipsDescendants = true
+
+-- CORNER
+local Corner = Instance.new("UICorner")
+Corner.Parent = MainFrame
+Corner.CornerRadius = UDim.new(0, 12)
+
+-- STROKE (BORDA)
+local Stroke = Instance.new("UIStroke")
+Stroke.Parent = MainFrame
+Stroke.Color = Color3.fromRGB(255, 0, 0)
+Stroke.Thickness = 1
+Stroke.Transparency = 0.6
+
+-- TÍTULO "Anti Hub | Test"
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.Position = UDim2.new(0, 0, 0, 5)
+Title.BackgroundTransparency = 1
+Title.Text = "Anti Hub | Test"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 22
+Title.Font = Enum.Font.GothamBold
+Title.TextScaled = true
+Title.TextXAlignment = Enum.TextXAlignment.Center
+
+-- SUBTÍTULO COM INFO DO JOGADOR SELECIONADO
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Parent = MainFrame
+SubTitle.Size = UDim2.new(1, 0, 0, 20)
+SubTitle.Position = UDim2.new(0, 0, 0, 40)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Text = "Selecione um jogador com o FOV"
+SubTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+SubTitle.TextSize = 12
+SubTitle.Font = Enum.Font.Gotham
+SubTitle.TextXAlignment = Enum.TextXAlignment.Center
+
+-- STATUS DO JOGADOR SELECIONADO
+local StatusText = Instance.new("TextLabel")
+StatusText.Parent = MainFrame
+StatusText.Size = UDim2.new(1, 0, 0, 20)
+StatusText.Position = UDim2.new(0, 0, 0, 60)
+StatusText.BackgroundTransparency = 1
+StatusText.Text = "Nenhum jogador selecionado"
+StatusText.TextColor3 = Color3.fromRGB(255, 100, 100)
+StatusText.TextSize = 11
+StatusText.Font = Enum.Font.Gotham
+StatusText.TextXAlignment = Enum.TextXAlignment.Center
+
+-- ATUALIZA STATUS QUANDO SELECIONA JOGADOR
+local function updateStatus()
+    if selectedPlayer then
+        local humanoid = selectedPlayer.Character and selectedPlayer.Character:FindFirstChild("Humanoid")
+        local health = humanoid and math.floor(humanoid.Health) or 0
+        StatusText.Text = "Selecionado: " .. selectedPlayer.Name .. " ❤️ " .. health
+        StatusText.TextColor3 = Color3.fromRGB(100, 255, 100)
+        SubTitle.Text = "Jogador no FOV!"
+    else
+        StatusText.Text = "Nenhum jogador selecionado"
+        StatusText.TextColor3 = Color3.fromRGB(255, 100, 100)
+        SubTitle.Text = "Mire em um jogador para selecionar"
+    end
+end
+
+-- ATUALIZA STATUS PERIODICAMENTE
+task.spawn(function()
+    while true do
+        updateStatus()
+        task.wait(0.5)
+    end
+end)
+
+-- MOSTRA O FOV NA TELA (CÍRCULO)
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = true
+FOVCircle.Radius = fovRadius
+FOVCircle.Color = Color3.fromRGB(255, 0, 0)
+FOVCircle.Thickness = 1.5
+FOVCircle.Filled = false
+FOVCircle.NumSides = 64
+FOVCircle.Transparency = 0.5
+
+-- ATUALIZA POSIÇÃO DO FOV
+RunService.RenderStepped:Connect(function()
+    local center = Camera.ViewportSize / 2
+    FOVCircle.Position = Vector2.new(center.X, center.Y)
+end)
+
+-- TOGGLE DA GUI (INSERT)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.Insert then
+        MainFrame.Visible = not MainFrame.Visible
+        FOVCircle.Visible = MainFrame.Visible
+    end
+end)
+
+-- TOGGLE DO FOV (F)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.F then
+        fovRadius = fovRadius == 200 and 400 or 200
+        FOVCircle.Radius = fovRadius
+    end
+end)
+
+-- PRINT DE INICIALIZAÇÃO
+print("Anti Hub | Test carregado com sucesso!")
+print("Pressione INSERT para abrir/fechar a GUI")
+print("Pressione F para alternar o tamanho do FOV")
+print("Mire em um jogador para selecionar com highlight vermelho")
+
+-- NOTIFICAÇÃO INICIAL
+local function notify(text, color)
+    local frame = Instance.new("Frame")
+    frame.Parent = ScreenGui
+    frame.Size = UDim2.new(0, 300, 0, 40)
+    frame.Position = UDim2.new(0.5, -150, 0, 20)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    frame.BackgroundTransparency = 0.9
+    frame.BorderSizePixel = 0
+    
+    local corner = Instance.new("UICorner")
+    corner.Parent = frame
+    corner.CornerRadius = UDim.new(0, 8)
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Parent = frame
+    stroke.Color = color or Color3.fromRGB(255, 0, 0)
+    stroke.Thickness = 1
+    
+    local label = Instance.new("TextLabel")
+    label.Parent = frame
+    label.Size = UDim2.new(1, -20, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 14
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    
+    game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -150, 0, 60)}):Play()
+    
+    task.delay(3, function()
+        game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Back), {Position = UDim2.new(0.5, -150, 0, -80)}):Play()
+        task.delay(0.5, function()
+            frame:Destroy()
+        end)
+    end)
+end
+
+notify("Anti Hub | Test carregado!", Color3.fromRGB(255, 0, 0))
